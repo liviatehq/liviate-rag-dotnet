@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <PackageId>Liviate.Rag</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Liviate</Authors>
+    <Description>Client SDK for Liviate's RAG stack: ingest, embed, retrieve, rerank, and (optionally) generate.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: missing XML doc comment; not documenting every record property/enum value,
+         only where the WHY is non-obvious, matching this project's comment philosophy. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- NOTE: the NuGet package id is "PdfPig" (owners: EliotJones, PdfPig, BobLd; matches
+         the UglyToad/PdfPig GitHub org). The C# namespace it ships is UglyToad.PdfPig, which
+         makes "UglyToad.PdfPig" a very easy wrong guess for the package id; that id belongs
+         to an unrelated, placeholder description package under a different owner. Verified via
+         nuget.org before adding this reference; don't "fix" the id back to UglyToad.PdfPig. -->
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
