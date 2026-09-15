@@ -38,9 +38,27 @@ var context = await client.RetrieveAsync("Har I parkering?", "hotel-kirstine", t
 ## Ingest
 
 `IngestAsync` handles a single file, URL, text string, or `Stream` —
-detecting which one automatically. See `Ingest/SourceClassifier.cs` and
-`Ingest/IngestPipeline.cs` for the exact detection order and supported file
-types (`.pdf`, `.docx`, `.md`, `.txt`, `.csv`, `.json`, `.html`).
+detecting which one automatically from content, never a filename
+extension. See `Ingest/SourceClassifier.cs` for the exact detection order.
+
+### Supported file types
+
+| Type | Extension |
+|---|---|
+| PDF | `.pdf` |
+| Word | `.docx` |
+| Markdown | `.md` |
+| Plain text | `.txt` |
+| CSV | `.csv` |
+| JSON | `.json` |
+| HTML | `.html` |
+
+Plus raw text (`SourceType.Text`) and URLs (a single page is scraped or
+downloaded automatically depending on its content type).
+
+OCR / scanned images are explicitly out of scope for v1 —
+`IngestAsync` throws `UnsupportedFileTypeException` rather than failing
+silently or half-parsing.
 
 For a non-blocking call, use `StartIngest` instead — it returns an
 `IngestJob` immediately rather than awaiting completion.
@@ -60,9 +78,11 @@ dotnet pack src/Liviate.Rag           # builds the NuGet package
 
 ## Status
 
-Built and verified live against production (not just against the mock test
-suite) — `Ingest` → `Retrieve` → `Query` all confirmed working end-to-end.
+`0.1.0` is published on [NuGet.org](https://www.nuget.org/packages/Liviate.Rag)
+and verified end-to-end against production — `Ingest` → `Retrieve` →
+`Query` all confirmed working, not just against the mock test suite.
 Unlike the Python SDK's original v1 (which had to guess at several backend
 contracts), this port was built directly against contracts already
 confirmed live: the token-exchange vector-store access pattern, the
 form-encoded exchange request body, and the Cohere-shaped rerank response.
+`IngestSiteAsync` is not yet implemented (see above).
