@@ -75,14 +75,3 @@ dotnet run --project examples/HelloWorld    # needs LIVIATE_API_KEY
 dotnet run --project examples/Quickstart    # needs LIVIATE_API_KEY
 dotnet pack src/Liviate.Rag           # builds the NuGet package
 ```
-
-## Status
-
-`0.1.0` is published on [NuGet.org](https://www.nuget.org/packages/Liviate.Rag)
-and verified end-to-end against production — `Ingest` → `Retrieve` →
-`Query` all confirmed working, not just against the mock test suite.
-Unlike the Python SDK's original v1 (which had to guess at several backend
-contracts), this port was built directly against contracts already
-confirmed live: the token-exchange vector-store access pattern, the
-form-encoded exchange request body, and the Cohere-shaped rerank response.
-`IngestSiteAsync` is not yet implemented (see above).
