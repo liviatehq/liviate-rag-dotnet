@@ -93,21 +93,6 @@ public sealed class RagClient : IDisposable, IAsyncDisposable
         return await ingestTask;
     }
 
-    /// <summary>
-    /// Not yet implemented. Whole-site crawling (following internal links, respecting
-    /// robots.txt, paging through up to maxPages) is a genuinely separate feature from
-    /// Ingest()'s single-source path -- it needs its own real engineering (crawl frontier,
-    /// politeness/rate limiting, dedup), not a rushed version bolted onto Ingest()'s pipeline.
-    /// Throws rather than pretending to support this -- matches the Python reference
-    /// implementation's status.
-    /// </summary>
-    public Task<IngestResult> IngestSiteAsync(string source, string collection, int maxPages = 50, IReadOnlyDictionary<string, object?>? metadata = null)
-    {
-        throw new NotImplementedException(
-            "IngestSiteAsync() is not yet implemented. Use IngestAsync() with a list of " +
-            "individual page URLs in the meantime -- it already accepts a batch of sources in one call.");
-    }
-
     // -- embed / rerank ------------------------------------------------
 
     public Task<EmbedResult> EmbedAsync(IReadOnlyList<string> texts, string model = EmbedClient.DefaultModel) =>

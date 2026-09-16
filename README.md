@@ -63,9 +63,11 @@ silently or half-parsing.
 For a non-blocking call, use `StartIngest` instead — it returns an
 `IngestJob` immediately rather than awaiting completion.
 
-Whole-site crawling (`IngestSiteAsync`) is not yet implemented — it throws
-`NotImplementedException`, matching the Python reference implementation's
-status. Use `IngestAsync` with a list of individual page URLs instead.
+Whole-site crawling isn't part of this SDK — that's a genuinely different
+problem (robots.txt compliance, politeness/rate limiting, avoiding crawl
+traps) than ingesting sources you already have. Crawl with whatever tool
+you already use, then pass the resulting URL list to `IngestAsync` — it
+already accepts a batch of sources in one call.
 
 ## Development
 
