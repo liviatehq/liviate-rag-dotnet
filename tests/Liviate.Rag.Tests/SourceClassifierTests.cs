@@ -18,6 +18,20 @@ public class SourceClassifierTests
         Assert.Equal(new List<object> { "a.pdf", "b.pdf" }, result.Value);
     }
 
+    [Theory]
+    [InlineData(SourceType.Text)]
+    [InlineData(SourceType.File)]
+    [InlineData(SourceType.Url)]
+    public void BatchIsDetectedRegardlessOfExplicitSourceType(SourceType sourceType)
+    {
+        // Regression test: batch detection used to only run inside the Auto branch, so
+        // Classify(new[] {"a", "b"}, SourceType.Text) threw ArgumentException("requires source
+        // to be a string, got List") instead of recognizing a two-item batch.
+        var result = SourceClassifier.Classify(new[] { "a", "b" }, sourceType);
+        Assert.Equal(SourceKind.Batch, result.Kind);
+        Assert.Equal(new List<object> { "a", "b" }, result.Value);
+    }
+
     [Fact]
     public void ArrayIsDetectedAsBatch()
     {

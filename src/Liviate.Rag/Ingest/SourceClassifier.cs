@@ -25,18 +25,29 @@ public sealed record Classification(SourceKind Kind, object Value);
 /// an existence check. This isolation is what makes the dispatch logic unit-testable without
 /// mocking the filesystem or network -- see SourceClassifierTests.
 ///
-/// Detection order (SourceType.Auto):
-/// 1. IEnumerable (not a string) -> batch
-/// 2. existing local path (string or FileInfo) -> file
-/// 3. http(s):// string -> url
-/// 4. Stream -> stream
-/// 5. anything else -> ArgumentException (raw strings are never silently treated as text;
+/// Batch detection (IEnumerable, not a string) happens in <see cref="Classify"/> before its
+/// sourceType parameter is even considered, regardless of its value, so
+/// <c>Classify(new[] {"a", "b"}, SourceType.Text)</c> is a valid two-item text batch, not an
+/// ArgumentException. Each item is then classified individually with the same sourceType (see
+/// Ingest/IngestPipeline.cs).
+///
+/// Detection order for a single (non-batch) source, when sourceType is SourceType.Auto:
+/// 1. existing local path (string or FileInfo) -> file
+/// 2. http(s):// string -> url
+/// 3. Stream -> stream
+/// 4. anything else -> ArgumentException (raw strings are never silently treated as text;
 ///    SourceType.Text must be explicit)
 /// </summary>
 public static class SourceClassifier
 {
     public static Classification Classify(object source, SourceType sourceType = SourceType.Auto)
     {
+        if (source is not string && source is System.Collections.IEnumerable enumerable)
+        {
+            var items = enumerable.Cast<object>().ToList();
+            return new Classification(SourceKind.Batch, items);
+        }
+
         switch (sourceType)
         {
             case SourceType.Text:
@@ -63,12 +74,6 @@ public static class SourceClassifier
 
     private static Classification ClassifyAuto(object source)
     {
-        if (source is not string && source is System.Collections.IEnumerable enumerable)
-        {
-            var items = enumerable.Cast<object>().ToList();
-            return new Classification(SourceKind.Batch, items);
-        }
-
         if (source is FileInfo fileInfo)
         {
             if (!fileInfo.Exists)

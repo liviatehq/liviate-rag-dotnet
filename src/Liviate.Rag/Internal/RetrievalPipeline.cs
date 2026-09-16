@@ -12,6 +12,12 @@ namespace Liviate.Rag.Internal;
 /// </summary>
 internal static class RetrievalPipeline
 {
+    /// <summary>
+    /// <paramref name="embedModel"/> = null (the default) means "resolve automatically": use the
+    /// embed model recorded against this collection at ingest time if the backend has one on
+    /// record (see VectorStoreClient.GetRecordedEmbedModelAsync), otherwise fall back to
+    /// EmbedClient.DefaultModel. An explicit embedModel always overrides both.
+    /// </summary>
     public static async Task<RetrieveResult> RunAsync(
         VectorStoreClient vectorStore,
         HttpClient gateway,
@@ -19,10 +25,11 @@ internal static class RetrievalPipeline
         string collection,
         int topK,
         object? filter,
-        string embedModel = EmbedClient.DefaultModel,
+        string? embedModel = null,
         string? rerankModel = RerankClient.DefaultModel)
     {
-        var embedResult = await EmbedClient.EmbedAsync(gateway, new[] { query }, embedModel);
+        var resolvedEmbedModel = embedModel ?? await vectorStore.GetRecordedEmbedModelAsync(collection) ?? EmbedClient.DefaultModel;
+        var embedResult = await EmbedClient.EmbedAsync(gateway, new[] { query }, resolvedEmbedModel);
         var embedVector = embedResult.Vectors[0];
 
         var sw = Stopwatch.StartNew();

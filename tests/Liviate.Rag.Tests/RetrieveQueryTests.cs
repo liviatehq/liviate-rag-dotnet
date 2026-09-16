@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Liviate.Rag.Exceptions;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
@@ -112,5 +113,37 @@ public class RetrieveQueryTests : IClassFixture<MockServerFixture>
         using var client = _fixture.CreateClient();
         var exc = await Assert.ThrowsAsync<LiviateException>(() => client.RetrieveAsync("Har I parkering?", "hotel-kirstine", topK: 5));
         Assert.Contains("no 'text' in its payload", exc.Message);
+    }
+
+    [Fact]
+    public async Task RetrievePassesCustomEmbedModelThrough()
+    {
+        // Regression test: RetrieveAsync/QueryAsync used to have no embedModel parameter at
+        // all, so a collection ingested with a non-default embed model could never be queried
+        // correctly -- the query was always embedded with the default model.
+        MockRetrievalChain(Array.Empty<object>());
+
+        using var client = _fixture.CreateClient();
+        await client.RetrieveAsync("Har I parkering?", "hotel-kirstine", embedModel: "custom/embedding-v2");
+
+        var embedRequest = _fixture.Server.LogEntries.Last(e => e.RequestMessage?.Path == "/v1/embeddings");
+        var sentModel = JsonDocument.Parse(embedRequest.RequestMessage!.Body!).RootElement.GetProperty("model").GetString();
+        Assert.Equal("custom/embedding-v2", sentModel);
+    }
+
+    [Fact]
+    public async Task RetrieveFallsBackToDefaultWhenNoEmbedModelRecorded()
+    {
+        // Today's real exchange response for a pre-existing collection never includes
+        // "embed_model" -- confirm the auto-resolve path falls back to the hardcoded default
+        // rather than erroring or sending null as a model string.
+        MockRetrievalChain(Array.Empty<object>());
+
+        using var client = _fixture.CreateClient();
+        await client.RetrieveAsync("query", "hotel-kirstine");
+
+        var embedRequest = _fixture.Server.LogEntries.Last(e => e.RequestMessage?.Path == "/v1/embeddings");
+        var sentModel = JsonDocument.Parse(embedRequest.RequestMessage!.Body!).RootElement.GetProperty("model").GetString();
+        Assert.Equal("liviate/embedding", sentModel);
     }
 }

@@ -95,14 +95,22 @@ public static class IngestPipeline
         }
 
         var embedResult = await EmbedClient.EmbedAsync(gateway, chunks, embedModel);
-        var points = chunks.Zip(embedResult.Vectors, (chunk, vector) => new VectorStorePoint(
-            Id: Guid.NewGuid().ToString(),
-            Vector: vector,
-            Payload: new Dictionary<string, object?> { ["text"] = chunk, ["metadata"] = metadata ?? new Dictionary<string, object?>() }
-        )).ToList();
+        var pointIds = chunks.Select(_ => Guid.NewGuid().ToString()).ToList();
+        var points = new List<VectorStorePoint>(chunks.Count);
+        for (var i = 0; i < chunks.Count; i++)
+        {
+            points.Add(new VectorStorePoint(
+                Id: pointIds[i],
+                Vector: embedResult.Vectors[i],
+                Payload: new Dictionary<string, object?> { ["text"] = chunks[i], ["metadata"] = metadata ?? new Dictionary<string, object?>() }
+            ));
+        }
 
-        await vectorStore.UpsertAsync(collection, points);
-        return new IngestResult { ChunksCreated = chunks.Count, SourceType = sourceType, Collection = collection };
+        await vectorStore.UpsertAsync(collection, points, embedModel);
+        return new IngestResult
+        {
+            ChunksCreated = chunks.Count, SourceType = sourceType, Collection = collection, PointIds = pointIds,
+        };
     }
 
     private static async Task<IngestResult> IngestBatchAsync(
@@ -121,7 +129,7 @@ public static class IngestPipeline
                 var itemClassification = SourceClassifier.Classify(item, sourceType);
                 result = await IngestOneAsync(gateway, vectorStore, itemClassification, collection, metadata, embedModel);
             }
-            catch (Exception exc) when (exc is ArgumentException or UnsupportedFileTypeException or HttpRequestException)
+            catch (Exception exc) when (exc is ArgumentException or LiviateException or HttpRequestException)
             {
                 result = new IngestResult { ChunksCreated = 0, SourceType = "unknown", Collection = collection, Warnings = new[] { exc.Message } };
             }
@@ -130,10 +138,23 @@ public static class IngestPipeline
             totalChunks += result.ChunksCreated;
         }
 
+        // If every item in a non-empty batch failed, nothing was ingested -- that's a total
+        // failure, not the "one bad item shouldn't abort the others" partial-failure case the
+        // per-item warning behavior above exists for. Throw instead of returning a
+        // success-shaped zero-chunk result a caller could easily miss without inspecting
+        // .Warnings.
+        if (items.Count > 0 && totalChunks == 0 && warnings.Count > 0)
+        {
+            throw new LiviateException(
+                $"All {items.Count} item(s) in this batch failed to ingest -- nothing was written. " +
+                $"First error: {warnings[0]}");
+        }
+
+        var pointIds = perSource.SelectMany(r => r.PointIds).ToList();
         return new IngestResult
         {
             ChunksCreated = totalChunks, SourceType = "batch", Collection = collection,
-            Warnings = warnings, PerSource = perSource,
+            Warnings = warnings, PerSource = perSource, PointIds = pointIds,
         };
     }
 }

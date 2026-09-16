@@ -28,6 +28,14 @@ public sealed record SearchHit(string Id, double Score, JsonElement? Payload);
 /// else in the package -- see project brief. Even the exchange response's own field names
 /// (which do name it) are never echoed into an exception message a caller could see -- see
 /// <see cref="Field"/> below.
+///
+/// Confirmed live 2026-09-16 against the real backend (mirrors the Python reference
+/// implementation's equivalent fix): the exchange endpoint accepts "collection" as the current
+/// request field name (keeping "name" as a permanent alias -- either works), records the
+/// embed_model the first time a collection is auto-created and returns it as "embed_model" on
+/// every later exchange, and prefers "physical_collection" over the older "collection_name" in
+/// its response (both are still sent today, but only physical_collection is guaranteed going
+/// forward).
 /// </summary>
 public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
 {
@@ -75,7 +83,8 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
     private HttpClient DataHttpFor(string baseUrl) =>
         _dataHttpByBase.GetOrAdd(baseUrl, url => new HttpClient { BaseAddress = new Uri(url), Timeout = _timeout });
 
-    private async Task<CachedGrant> GrantForAsync(string collection, string access, int? vectorSize = null)
+    private async Task<CachedGrant> GrantForAsync(
+        string collection, string access, int? vectorSize = null, string? embedModel = null)
     {
         var key = (collection, access);
         if (_cache.TryGetValue(key, out var cached) && cached.Usable(_clock))
@@ -94,7 +103,7 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
                 return cached;
             }
 
-            var data = new Dictionary<string, string> { ["name"] = collection, ["access"] = access };
+            var data = new Dictionary<string, string> { ["collection"] = collection, ["access"] = access };
             if (vectorSize is not null)
             {
                 // Lets the exchange endpoint auto-create the collection on first write -- an
@@ -103,6 +112,13 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
                 // first" step through the console UI before a customer's very first Ingest()
                 // can succeed.
                 data["vector_size"] = vectorSize.Value.ToString();
+            }
+            if (embedModel is not null)
+            {
+                // Recorded against the collection the first time it's auto-created, so a later
+                // RetrieveAsync/QueryAsync can resolve it automatically -- see
+                // GetRecordedEmbedModelAsync below.
+                data["embed_model"] = embedModel;
             }
 
             // NOTE: this endpoint genuinely expects form-encoded data, unlike every other
@@ -129,8 +145,9 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
             var grant = new CachedGrant(
                 Token: Field(root, "token", "data-plane credential").GetString()!,
                 DataPlaneUrl: Field(root, "qdrant_url", "data-plane URL").GetString()!.TrimEnd('/'),
-                RealCollectionName: Field(root, "collection_name", "tenant-namespaced collection name").GetString()!,
-                ExpiresAtElapsedMs: _clock.Elapsed.TotalMilliseconds + ttlMs);
+                RealCollectionName: ResolveRealCollectionName(root),
+                ExpiresAtElapsedMs: _clock.Elapsed.TotalMilliseconds + ttlMs,
+                RecordedEmbedModel: root.TryGetProperty("embed_model", out var em) ? em.GetString() : null);
 
             _cache[key] = grant;
             return grant;
@@ -139,6 +156,20 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Prefers "physical_collection" (the current field), falling back to the older
+    /// "collection_name" for a response that only carries that -- the real backend sends both
+    /// today, so this fallback is defensive, not required.
+    /// </summary>
+    private static string ResolveRealCollectionName(JsonElement root)
+    {
+        if (root.TryGetProperty("physical_collection", out var physical))
+        {
+            return physical.GetString()!;
+        }
+        return Field(root, "collection_name", "tenant-namespaced collection name").GetString()!;
     }
 
     /// <summary>
@@ -155,6 +186,18 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
                 $"Vector store token exchange returned an unexpected response (missing {description}).");
         }
         return value;
+    }
+
+    /// <summary>
+    /// Returns the embed model recorded against this collection at ingest time, or null if none
+    /// is recorded (true for any collection that predates this feature). Reuses the same grant
+    /// cache SearchAsync does, so calling this before a search against the same collection costs
+    /// no extra network round trip.
+    /// </summary>
+    public async Task<string?> GetRecordedEmbedModelAsync(string collection)
+    {
+        var grant = await GrantForAsync(collection, "r");
+        return grant.RecordedEmbedModel;
     }
 
     public async Task<List<SearchHit>> SearchAsync(string collection, IReadOnlyList<float> vector, int topK, object? filter)
@@ -192,10 +235,10 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
         return hits;
     }
 
-    public async Task UpsertAsync(string collection, IReadOnlyList<VectorStorePoint> points)
+    public async Task UpsertAsync(string collection, IReadOnlyList<VectorStorePoint> points, string? embedModel = null)
     {
         var vectorSize = points.Count > 0 ? points[0].Vector.Count : (int?)null;
-        var grant = await GrantForAsync(collection, "rw", vectorSize);
+        var grant = await GrantForAsync(collection, "rw", vectorSize, embedModel);
 
         var body = new
         {
@@ -212,7 +255,30 @@ public sealed class VectorStoreClient : IDisposable, IAsyncDisposable
         await HttpErrors.RaiseForStatusAsync(response);
     }
 
-    private sealed record CachedGrant(string Token, string DataPlaneUrl, string RealCollectionName, double ExpiresAtElapsedMs)
+    /// <summary>Deletes points by id or by metadata filter -- exactly one of the two must be given.</summary>
+    public async Task DeleteAsync(string collection, IReadOnlyList<string>? ids = null, object? filter = null)
+    {
+        if ((ids is null) == (filter is null))
+        {
+            throw new ArgumentException("DeleteAsync requires exactly one of ids or filter, not both/neither.");
+        }
+
+        var grant = await GrantForAsync(collection, "rw");
+        object body = ids is not null ? new { points = ids } : new { filter };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/collections/{grant.RealCollectionName}/points/delete")
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", grant.Token);
+
+        using var response = await DataHttpFor(grant.DataPlaneUrl).SendAsync(request);
+        await HttpErrors.RaiseForStatusAsync(response);
+    }
+
+    private sealed record CachedGrant(
+        string Token, string DataPlaneUrl, string RealCollectionName, double ExpiresAtElapsedMs,
+        string? RecordedEmbedModel = null)
     {
         public bool Usable(Stopwatch clock) => clock.Elapsed.TotalMilliseconds < ExpiresAtElapsedMs - RefreshMarginMs;
     }

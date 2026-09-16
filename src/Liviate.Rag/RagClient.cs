@@ -116,20 +116,36 @@ public sealed class RagClient : IDisposable, IAsyncDisposable
     public Task<RerankResult> RerankAsync(string query, IReadOnlyList<string> documents, string model = RerankClient.DefaultModel) =>
         RerankClient.RerankAsync(_gateway, query, documents, model);
 
+    // -- delete ------------------------------------------------
+
+    /// <summary>Removes points from a collection by id (e.g. <c>result.PointIds</c> from a prior
+    /// Ingest) or by metadata filter -- exactly one of the two must be given.</summary>
+    public Task DeleteAsync(string collection, IReadOnlyList<string>? ids = null, object? filter = null) =>
+        _vectorStore.DeleteAsync(collection, ids, filter);
+
     // -- retrieve / query ------------------------------------------------
 
+    /// <summary>
+    /// <paramref name="embedModel"/> must match whatever model the collection was ingested with
+    /// (see <see cref="IngestAsync"/>'s embedModel parameter) -- embedding a query with a
+    /// different model than the collection's vectors either returns garbage or hard-fails on a
+    /// dimension mismatch. Leave it null (the default) to resolve it automatically from what the
+    /// collection was ingested with, when the backend has that on record.
+    /// </summary>
     public Task<RetrieveResult> RetrieveAsync(
-        string query, string collection, int topK = 5, object? filter = null, string? rerankModel = RerankClient.DefaultModel) =>
-        RetrievalPipeline.RunAsync(_vectorStore, _gateway, query, collection, topK, filter, rerankModel: rerankModel);
+        string query, string collection, int topK = 5, object? filter = null,
+        string? embedModel = null, string? rerankModel = RerankClient.DefaultModel) =>
+        RetrievalPipeline.RunAsync(_vectorStore, _gateway, query, collection, topK, filter, embedModel, rerankModel);
 
     /// <summary>
     /// <paramref name="model"/> has no Liviate default: generation is deliberately kept out of
     /// the bundled RAG product (see project brief) so the caller always names their own
     /// Inference model explicitly.
     /// </summary>
-    public async Task<QueryResult> QueryAsync(string query, string collection, string model, int topK = 5, object? filter = null)
+    public async Task<QueryResult> QueryAsync(
+        string query, string collection, string model, int topK = 5, object? filter = null, string? embedModel = null)
     {
-        var retrieval = await RetrieveAsync(query, collection, topK, filter);
+        var retrieval = await RetrieveAsync(query, collection, topK, filter, embedModel);
         var (answer, genUsage, genTiming) = await GenerateClient.GenerateAsync(_gateway, query, retrieval.Sources, model);
 
         var usage = retrieval.Usage with { GenerationTokens = genUsage.GenerationTokens };
@@ -139,10 +155,10 @@ public sealed class RagClient : IDisposable, IAsyncDisposable
 
     /// <summary>Streaming variant of QueryAsync -- yields answer text chunks as they arrive.</summary>
     public async IAsyncEnumerable<string> QueryStreamAsync(
-        string query, string collection, string model, int topK = 5, object? filter = null,
+        string query, string collection, string model, int topK = 5, object? filter = null, string? embedModel = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var retrieval = await RetrieveAsync(query, collection, topK, filter);
+        var retrieval = await RetrieveAsync(query, collection, topK, filter, embedModel);
         await foreach (var chunk in GenerateClient.GenerateStreamAsync(_gateway, query, retrieval.Sources, model, cancellationToken))
         {
             yield return chunk;
